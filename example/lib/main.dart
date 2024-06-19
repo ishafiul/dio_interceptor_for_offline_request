@@ -74,7 +74,14 @@ class _MyHomePageState extends State<MyHomePage> {
 
   void _incrementCounter() {
     setState(() {
-      dio.get('https://jsonplaceholder.typicode.com/todos/1',);
+      dio.post(
+        'https://httpbin.org/post',
+        data: {"bodyKey": "bodyValue", "key": "value"},
+        onSendProgress: (count, total) {
+          print(count);
+          print(total);
+        },
+      );
       _counter++;
     });
   }
