@@ -22,8 +22,8 @@ class DioInternetInterceptor extends Interceptor {
   });
 
   final RequestOptions Function(RequestOptions options)? onDioRequest;
-  final void Function(RequestOptions options, RequestInterceptorHandler handler)? offlineResponseHandler;
-  final void Function(Response response)? offlineRequestHandler;
+  final void Function(RequestOptions options, RequestInterceptorHandler handler)? offlineRequestHandler;
+  final void Function(Response response)? offlineResponseHandler;
   final void Function(bool isConnected)? hasConnection;
   final DioExeptionHander Function(DioException err, ErrorInterceptorHandler handler)? onDioError;
 
@@ -42,7 +42,7 @@ class DioInternetInterceptor extends Interceptor {
         if (value != null && !value.contains(curl)) {
           await curlService.addCurl(curl);
         }
-        offlineResponseHandler?.call(options, handler);
+        offlineRequestHandler?.call(options, handler);
       }
     } else {
       await _makeRequest();
@@ -52,7 +52,7 @@ class DioInternetInterceptor extends Interceptor {
 
   @override
   void onResponse(Response response, ResponseInterceptorHandler handler) {
-    offlineRequestHandler?.call(response);
+    offlineResponseHandler?.call(response);
     super.onResponse(response, handler);
   }
 
