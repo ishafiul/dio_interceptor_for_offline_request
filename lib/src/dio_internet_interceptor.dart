@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:dio_internet_interceptor/src/db_object.dart';
+import 'package:dio_internet_interceptor/src/extension.dart';
 import 'package:internet_connection_checker/internet_connection_checker.dart';
 
 class DioExeptionHander {
@@ -17,45 +18,46 @@ class DioExeptionHander {
 class DioInternetInterceptor extends Interceptor {
   /// {@macro dio_internet_interceptor}
   const DioInternetInterceptor({
-    required this.onDioRequest,
-    required this.onDioError,
+    this.onDioRequest,
+    this.onDioError,
     this.hasConnection,
+    this.offlineHandler,
   });
 
-  final RequestOptions Function(RequestOptions options) onDioRequest;
+  final RequestOptions Function(RequestOptions options)? onDioRequest;
+  final void Function(
+    RequestOptions options,
+    RequestInterceptorHandler handler,
+  )? offlineHandler;
   final void Function({bool isConnected})? hasConnection;
   final DioExeptionHander Function(
     DioException err,
     ErrorInterceptorHandler handler,
-  ) onDioError;
+  )? onDioError;
 
   @override
   Future<void> onRequest(
     RequestOptions options,
     RequestInterceptorHandler handler,
   ) async {
-    final reqOptions = onDioRequest(options);
+    final reqOptions = onDioRequest?.call(options);
 
     final result = await InternetConnectionChecker().hasConnection;
     if (result == false) {
-      if (options.method.toUpperCase() == 'GET') {
-        hasConnection?.call(isConnected: result);
-        return;
-      }
-      final curl = _cURLRepresentation(reqOptions);
-      final curlService = CurlService();
-      await curlService.addCurl(curl);
-      final value = await curlService.getCurls();
-     /* value?.forEach((element) {
-        curlService.deleteCurl(value.indexOf(element));
-      });*/
-      print(value);
       hasConnection?.call(isConnected: result);
+      if (reqOptions?.isOfflineApi != null &&
+          reqOptions?.isOfflineApi == true) {
+        final curl = _cURLRepresentation(reqOptions ?? options);
+        final curlService = CurlService();
+        await curlService.addCurl(curl);
+        final value = await curlService.getCurls();
+        print(value);
+        offlineHandler?.call(options, handler);
+      }
       return;
     } else {
-      print(options.data);
       await _makeRequest();
-      handler.next(reqOptions);
+      handler.next(reqOptions ?? options);
     }
   }
 
@@ -64,12 +66,12 @@ class DioInternetInterceptor extends Interceptor {
     DioException err,
     ErrorInterceptorHandler handler,
   ) async {
-    final result = onDioError(err, handler);
-    super.onError(result.err, result.handler);
+    final result = onDioError?.call(err, handler);
+    super.onError(result?.err ?? err, result?.handler ?? handler);
   }
 
   String _cURLRepresentation(RequestOptions options) {
-    final List<String> components = ['curl -i'];
+    final components = <String>['curl -i'];
     if (options.method.toUpperCase() != 'GET') {
       components.add('-X ${options.method}');
     }
@@ -84,7 +86,6 @@ class DioInternetInterceptor extends Interceptor {
       final data = json.encode(options.data).replaceAll('"', '\\"');
       components.add('-d "$data"');
     }
-
 
     components.add('"${options.uri.toString()}"');
 
@@ -115,14 +116,14 @@ class DioInternetInterceptor extends Interceptor {
     final url = parts.sublist(urlIndex).join(' ').replaceAll('"', '');
 
     // Extract headers from the parts
-    final headers = extractHeadersFromCurl(curl);
+    final headers = _extractHeadersFromCurl(curl);
 
     // Extract body from the parts
     dynamic body;
     for (var i = 0; i < parts.length; i++) {
       if (parts[i] == '-d' && i + 1 < parts.length) {
         // Extract the data section (inside double quotes)
-        String dataSection = parts[i + 1];
+        var dataSection = parts[i + 1];
 
         // Remove surrounding double quotes and escape characters from the data section
         dataSection = dataSection.replaceAll('"', '');
@@ -148,55 +149,14 @@ class DioInternetInterceptor extends Interceptor {
 
     // Set URL in RequestOptions
     final uri = Uri.parse(url);
-    print(uri.host);
     options
-      ..baseUrl = '${uri.scheme}://${uri.host}${uri.path}'
+      ..baseUrl = '${uri.scheme}://${uri.host}${uri.path}?${uri.query}'
       ..queryParameters = uri.queryParameters;
 
     return options;
   }
 
-  Map<String, dynamic> extractBodysFromCurl(String curl) {
-    final bodyMap = <String, dynamic>{};
-
-    // Split the curl command by spaces to analyze each part
-    final parts = curl.split(' ');
-
-    for (var i = 0; i < parts.length; i++) {
-      // Look for the '-d' flag
-      if (parts[i] == '-d' && i + 1 < parts.length) {
-        // Extract the data section
-        final dataSection = parts[i + 1];
-
-        // Check if it starts with '{' and ends with '}', indicating a JSON object
-        if (dataSection.startsWith('{') && dataSection.endsWith('}')) {
-          try {
-            // Parse the JSON string into a map
-            final parsedData = json.decode(dataSection);
-
-            // Add each key-value pair from the parsed data into the bodyMap
-            parsedData.forEach((String key, value) {
-              String cleanedKey = key.replaceAll(r'\', '');
-              bodyMap["$cleanedKey "] = ("$value " as String).replaceAll(r'\', '');
-            });
-
-            // Break the loop since we found and parsed the data section
-            break;
-          } catch (e) {
-            // Handle any parsing errors here if needed
-            print('Error parsing data section: $e');
-          }
-        } else {
-          // Handle cases where the data section format is unexpected
-          print('Unexpected data section format: $dataSection');
-        }
-      }
-    }
-
-    return bodyMap;
-  }
-
-  Map<String, dynamic> extractHeadersFromCurl(String curl) {
+  Map<String, dynamic> _extractHeadersFromCurl(String curl) {
     // Initialize an empty map to store headers
     final headers = <String, dynamic>{};
 
@@ -232,7 +192,7 @@ class DioInternetInterceptor extends Interceptor {
     return headers;
   }
 
-  Options requestOptionsToOptions(RequestOptions requestOptions) {
+  Options _requestOptionsToOptions(RequestOptions requestOptions) {
     return Options(
       method: requestOptions.method,
       sendTimeout: requestOptions.sendTimeout,
@@ -262,7 +222,7 @@ class DioInternetInterceptor extends Interceptor {
         final index = curls.indexOf(curl);
         await curlService.deleteCurl(index).then((value) {
           final reqOptions = _curlRepresentationToOptions(curl);
-          final options = requestOptionsToOptions(reqOptions);
+          final options = _requestOptionsToOptions(reqOptions);
           curlList.add({reqOptions.baseUrl: options});
         });
       }
@@ -272,8 +232,8 @@ class DioInternetInterceptor extends Interceptor {
       List.generate(
         curlList.length,
         (index) => dio.request(
-          curlList[0].keys.first,
-          options: curlList[0].values.first as Options,
+          curlList[index].keys.first,
+          options: curlList[index].values.first as Options,
         ),
       ),
     );
