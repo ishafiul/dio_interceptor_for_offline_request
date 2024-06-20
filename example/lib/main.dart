@@ -11,7 +11,13 @@ void main() async {
   final appDocumentDir = await path_provider.getApplicationDocumentsDirectory();
   Hive.init(appDocumentDir.path);
   dio.interceptors.add(DioInternetInterceptor(
-      onDioRequest: (options) => options,
+      onDioRequest: (options) {
+        options.isOfflineApi = true;
+        return options;
+      },
+      offlineResponseHandler: (response) {
+        print(response);
+      },
       onDioError: (DioException err, ErrorInterceptorHandler handler) {
         return DioExeptionHander(err: err, handler: handler);
       }));
