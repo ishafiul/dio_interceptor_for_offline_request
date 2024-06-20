@@ -12,11 +12,7 @@ class DioExeptionHander {
   final ErrorInterceptorHandler handler;
 }
 
-/// {@template dio_internet_interceptor}
-/// dio interceptor
-/// {@endtemplate}
 class DioInternetInterceptor extends Interceptor {
-  /// {@macro dio_internet_interceptor}
   const DioInternetInterceptor({
     this.onDioRequest,
     this.onDioError,
@@ -26,44 +22,32 @@ class DioInternetInterceptor extends Interceptor {
   });
 
   final RequestOptions Function(RequestOptions options)? onDioRequest;
-  final void Function(
-    RequestOptions options,
-    RequestInterceptorHandler handler,
-  )? offlineResponseHandler;
-
-  final void Function(
-    Response response,
-  )? offlineRequestHandler;
-  final void Function({bool isConnected})? hasConnection;
-  final DioExeptionHander Function(
-    DioException err,
-    ErrorInterceptorHandler handler,
-  )? onDioError;
+  final void Function(RequestOptions options, RequestInterceptorHandler handler)? offlineResponseHandler;
+  final void Function(Response response)? offlineRequestHandler;
+  final void Function(bool isConnected)? hasConnection;
+  final DioExeptionHander Function(DioException err, ErrorInterceptorHandler handler)? onDioError;
 
   @override
-  Future<void> onRequest(
-    RequestOptions options,
-    RequestInterceptorHandler handler,
-  ) async {
+  Future<void> onRequest(RequestOptions options, RequestInterceptorHandler handler) async {
     final reqOptions = onDioRequest?.call(options);
 
     final result = await InternetConnectionChecker().hasConnection;
     if (result == false) {
-      hasConnection?.call(isConnected: result);
-      if (reqOptions?.isOfflineApi != null &&
-          reqOptions?.isOfflineApi == true) {
+      hasConnection?.call(result);
+      if (reqOptions?.isOfflineApi != null && reqOptions?.isOfflineApi == true) {
         final curl = _cURLRepresentation(reqOptions ?? options);
+
         final curlService = CurlService();
-        await curlService.addCurl(curl);
         final value = await curlService.getCurls();
-        print(value);
+        if (value != null && !value.contains(curl)) {
+          await curlService.addCurl(curl);
+        }
         offlineResponseHandler?.call(options, handler);
       }
-      return;
     } else {
       await _makeRequest();
-      handler.next(reqOptions ?? options);
     }
+    handler.next(reqOptions ?? options);
   }
 
   @override
@@ -73,10 +57,7 @@ class DioInternetInterceptor extends Interceptor {
   }
 
   @override
-  Future<void> onError(
-    DioException err,
-    ErrorInterceptorHandler handler,
-  ) async {
+  Future<void> onError(DioException err, ErrorInterceptorHandler handler) async {
     final result = onDioError?.call(err, handler);
     super.onError(result?.err ?? err, result?.handler ?? handler);
   }
@@ -104,11 +85,8 @@ class DioInternetInterceptor extends Interceptor {
   }
 
   RequestOptions _curlRepresentationToOptions(String curl) {
-    // Split the string by spaces to get individual parts
-
     final parts = curl.split(' ');
 
-    // Extract method from the parts
     var method = 'GET';
     for (var i = 0; i < parts.length; i++) {
       if (parts[i] == '-X' && i + 1 < parts.length) {
@@ -117,7 +95,6 @@ class DioInternetInterceptor extends Interceptor {
       }
     }
 
-    // Extract URL from the last part
     final urlIndex = parts.indexWhere((part) {
       return part.startsWith('"http');
     });
@@ -126,90 +103,65 @@ class DioInternetInterceptor extends Interceptor {
     }
     final url = parts.sublist(urlIndex).join(' ').replaceAll('"', '');
 
-    // Extract headers from the parts
     final headers = _extractHeadersFromCurl(curl);
 
-    // Extract body from the parts
-    dynamic body;
-    for (var i = 0; i < parts.length; i++) {
-      if (parts[i] == '-d' && i + 1 < parts.length) {
-        // Extract the data section (inside double quotes)
-        var dataSection = parts[i + 1];
+    final dynamic body = _extractBodyFromCurl(curl)?.replaceAll('\\', '');
 
-        // Remove surrounding double quotes and escape characters from the data section
-        dataSection = dataSection.replaceAll('"', '');
-
-        // Decode the JSON string into a Dart object
-        try {
-          body = json.decode(dataSection);
-        } catch (e) {
-          throw FormatException('Error parsing request body: $e');
-        }
-        break;
-      }
-    }
-
-    // Create RequestOptions object
     final options = RequestOptions(
       method: method,
       headers: headers,
       data: body,
       queryParameters: {},
-      // Assuming baseUrl is not specified in the cURL command
     );
 
-    // Set URL in RequestOptions
     final uri = Uri.parse(url);
     options
-      ..baseUrl = '${uri.scheme}://${uri.host}${uri.path}?${uri.query}'
+      ..baseUrl = '${uri.scheme}://${uri.host}'
+      ..path = uri.path
       ..queryParameters = uri.queryParameters;
 
     return options;
   }
-
   Map<String, dynamic> _extractHeadersFromCurl(String curl) {
-    // Initialize an empty map to store headers
-    final headers = <String, dynamic>{};
+    final regex = RegExp(r'-H\s+"([^"]+)"');
+    final Iterable<Match> matches = regex.allMatches(curl);
 
-    // Split the string by spaces to get individual parts
-    final parts = curl.split(' ');
+    final headersMap = <String, dynamic>{};
 
-    // Iterate over the parts to find headers
-    for (var i = 0; i < parts.length; i++) {
-      // If the current part starts with '-H' and there's a next part
-      if (parts[i] == '-H' && i + 1 < parts.length) {
-        // Get the next part as the header string
-        final headerString = parts[i + 1];
-
-        // Remove leading and trailing double quotes from the header string
-        final cleanedHeaderString = headerString.replaceAll('"', '');
-
-        // Split the cleaned header string by colon ':' to separate name and value
-        final headerParts = cleanedHeaderString.split(':');
-
-        // Ensure the header string is properly formatted
-        if (headerParts.length == 2) {
-          // Trim leading and trailing whitespace from name and value
-          final name = headerParts[0].trim();
-          final value = headerParts[1].trim();
-
-          // Add the header to the map
-          headers[name] = value;
-        }
+    matches.forEach((match) {
+      final headerString = match.group(1)!;
+      final parts = headerString.split(':');
+      if (parts.length == 2) {
+        final name = parts[0].trim();
+        final value = parts[1].trim();
+        headersMap[name] = value;
       }
-    }
+    });
 
-    // Return the extracted headers
-    return headers;
+    return headersMap;
   }
 
+  String? _extractBodyFromCurl(String curl) {
+    final regex = RegExp(r'-d\s+"({.*?})"');
+    final Match? match = regex.firstMatch(curl);
+
+    return match?.group(1);
+  }
+
+
   Options _requestOptionsToOptions(RequestOptions requestOptions) {
+    final headers = Map<String, dynamic>.from(requestOptions.headers);
+    // Ensure we only have one 'Content-Type' header
+    if (headers.containsKey('content-type')) {
+      headers.remove('content-type');
+    }
+
     return Options(
       method: requestOptions.method,
       sendTimeout: requestOptions.sendTimeout,
       receiveTimeout: requestOptions.receiveTimeout,
       extra: requestOptions.extra,
-      headers: requestOptions.headers,
+      headers: headers,
       responseType: requestOptions.responseType,
       contentType: requestOptions.contentType,
       validateStatus: requestOptions.validateStatus,
@@ -227,26 +179,26 @@ class DioInternetInterceptor extends Interceptor {
     final curlService = CurlService();
     final dio = Dio();
     final curls = await curlService.getCurls();
-    final curlList = <Map<String, dynamic>>[];
+
     if (curls != null) {
-      for (final curl in curls) {
-        final index = curls.indexOf(curl);
-        await curlService.deleteCurl(index).then((value) {
+      for (var i = curls.length - 1; i >= 0; i--) {
+        final curl = curls[i];
+        await curlService.deleteCurl(i).then((value) async {
           final reqOptions = _curlRepresentationToOptions(curl);
           final options = _requestOptionsToOptions(reqOptions);
-          curlList.add({reqOptions.baseUrl: options});
+
+          try {
+            await dio.request(
+              reqOptions.baseUrl + reqOptions.path,
+              options: options,
+              queryParameters: reqOptions.queryParameters,
+              data: reqOptions.data,
+            );
+          } catch (e) {
+            print('Error during request at index $i: $e');
+          }
         });
       }
     }
-
-    await Future.wait(
-      List.generate(
-        curlList.length,
-        (index) => dio.request(
-          curlList[index].keys.first,
-          options: curlList[index].values.first as Options,
-        ),
-      ),
-    );
   }
 }
