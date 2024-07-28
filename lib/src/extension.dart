@@ -5,5 +5,5 @@ extension DioRequestExtension on RequestOptions {
   set isOfflineApi(bool status) => extra['isOfflineApi'] = status;
 
   bool get isOfflineApi =>
-      extra['isOfflineApi'] != null ? extra["isOfflineApi"] as bool : false;
+      extra['isOfflineApi'] != null ? extra['isOfflineApi'] as bool : false;
 }

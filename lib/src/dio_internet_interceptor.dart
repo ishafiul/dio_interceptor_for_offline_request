@@ -5,14 +5,34 @@ import 'package:dio_internet_interceptor/src/db_object.dart';
 import 'package:dio_internet_interceptor/src/extension.dart';
 import 'package:internet_connection_checker/internet_connection_checker.dart';
 
-class DioExeptionHander {
-  DioExeptionHander({required this.err, required this.handler});
+/// A class to handle Dio exceptions and provide descriptive error messages.
+class DioExceptionHandler {
+  /// Creates an instance of [DioExceptionHandler] with the given Dio exception
+  /// and error interceptor handler.
+  ///
+  /// The [err] parameter is the Dio exception that occurred.
+  /// The [handler] parameter is the error interceptor handler to manage the error.
+  DioExceptionHandler({
+    required this.err,
+    required this.handler,
+  });
 
+  /// The Dio exception that occurred.
   final DioException err;
+
+  /// The error interceptor handler to manage the error.
   final ErrorInterceptorHandler handler;
 }
 
+/// A custom Dio interceptor to handle internet connectivity and offline requests.
 class DioInternetInterceptor extends Interceptor {
+  /// Creates an instance of [DioInternetInterceptor] with optional callbacks.
+  ///
+  /// The [onDioRequest] callback is called before the request is sent.
+  /// The [onDioError] callback is called when an error occurs during the request.
+  /// The [hasConnection] callback is called to check internet connectivity.
+  /// The [offlineResponseHandler] callback is called to handle the response when offline.
+  /// The [offlineRequestHandler] callback is called to handle the request when offline.
   const DioInternetInterceptor({
     this.onDioRequest,
     this.onDioError,
@@ -21,20 +41,40 @@ class DioInternetInterceptor extends Interceptor {
     this.offlineRequestHandler,
   });
 
+  /// A callback to modify the [RequestOptions] before the request is sent.
   final RequestOptions Function(RequestOptions options)? onDioRequest;
-  final void Function(RequestOptions options, RequestInterceptorHandler handler)? offlineRequestHandler;
-  final void Function(Response response)? offlineResponseHandler;
-  final void Function(bool isConnected)? hasConnection;
-  final DioExeptionHander Function(DioException err, ErrorInterceptorHandler handler)? onDioError;
 
+  /// A callback to handle the request when offline.
+  final void Function(
+      RequestOptions options,
+      RequestInterceptorHandler handler,
+      )? offlineRequestHandler;
+
+  /// A callback to handle the response when offline.
+  final void Function(Response response)? offlineResponseHandler;
+
+  /// A callback to check internet connectivity.
+  final void Function(bool isConnected)? hasConnection;
+
+  /// A callback to handle Dio errors.
+  final DioExceptionHandler Function(
+      DioException err,
+      ErrorInterceptorHandler handler,
+      )? onDioError;
+
+  /// Intercepts the request before it is sent.
   @override
-  Future<void> onRequest(RequestOptions options, RequestInterceptorHandler handler) async {
+  Future<void> onRequest(
+      RequestOptions options,
+      RequestInterceptorHandler handler,
+      ) async {
     final reqOptions = onDioRequest?.call(options);
 
     final result = await InternetConnectionChecker().hasConnection;
     if (result == false) {
       hasConnection?.call(result);
-      if (reqOptions?.isOfflineApi != null && reqOptions?.isOfflineApi == true) {
+      if (reqOptions?.isOfflineApi != null &&
+          reqOptions?.isOfflineApi == true) {
         final curl = _cURLRepresentation(reqOptions ?? options);
 
         final curlService = CurlService();
@@ -50,18 +90,24 @@ class DioInternetInterceptor extends Interceptor {
     handler.next(reqOptions ?? options);
   }
 
+  /// Intercepts the response after it is received.
   @override
   void onResponse(Response response, ResponseInterceptorHandler handler) {
     offlineResponseHandler?.call(response);
     super.onResponse(response, handler);
   }
 
+  /// Intercepts errors during the request.
   @override
-  Future<void> onError(DioException err, ErrorInterceptorHandler handler) async {
+  Future<void> onError(
+      DioException err,
+      ErrorInterceptorHandler handler,
+      ) async {
     final result = onDioError?.call(err, handler);
     super.onError(result?.err ?? err, result?.handler ?? handler);
   }
 
+  /// Generates a cURL representation of the [RequestOptions].
   String _cURLRepresentation(RequestOptions options) {
     final components = <String>['curl -i'];
     if (options.method.toUpperCase() != 'GET') {
@@ -75,15 +121,16 @@ class DioInternetInterceptor extends Interceptor {
     });
 
     if (options.data != null) {
-      final data = json.encode(options.data).replaceAll('"', '\\"');
+      final data = json.encode(options.data).replaceAll('"', r'\"');
       components.add('-d "$data"');
     }
 
-    components.add('"${options.uri.toString()}"');
+    components.add('"${options.uri}"');
 
     return components.join(' ');
   }
 
+  /// Converts a cURL representation to [RequestOptions].
   RequestOptions _curlRepresentationToOptions(String curl) {
     final parts = curl.split(' ');
 
@@ -105,7 +152,7 @@ class DioInternetInterceptor extends Interceptor {
 
     final headers = _extractHeadersFromCurl(curl);
 
-    final dynamic body = _extractBodyFromCurl(curl)?.replaceAll('\\', '');
+    final dynamic body = _extractBodyFromCurl(curl)?.replaceAll(r'\', '');
 
     final options = RequestOptions(
       method: method,
@@ -122,13 +169,15 @@ class DioInternetInterceptor extends Interceptor {
 
     return options;
   }
+
+  /// Extracts headers from a cURL command.
   Map<String, dynamic> _extractHeadersFromCurl(String curl) {
     final regex = RegExp(r'-H\s+"([^"]+)"');
     final Iterable<Match> matches = regex.allMatches(curl);
 
     final headersMap = <String, dynamic>{};
 
-    matches.forEach((match) {
+    for (final match in matches) {
       final headerString = match.group(1)!;
       final parts = headerString.split(':');
       if (parts.length == 2) {
@@ -136,11 +185,12 @@ class DioInternetInterceptor extends Interceptor {
         final value = parts[1].trim();
         headersMap[name] = value;
       }
-    });
+    }
 
     return headersMap;
   }
 
+  /// Extracts the body from a cURL command.
   String? _extractBodyFromCurl(String curl) {
     final regex = RegExp(r'-d\s+"({.*?})"');
     final Match? match = regex.firstMatch(curl);
@@ -148,7 +198,7 @@ class DioInternetInterceptor extends Interceptor {
     return match?.group(1);
   }
 
-
+  /// Converts [RequestOptions] to [Options].
   Options _requestOptionsToOptions(RequestOptions requestOptions) {
     final headers = Map<String, dynamic>.from(requestOptions.headers);
     // Ensure we only have one 'Content-Type' header
@@ -175,6 +225,7 @@ class DioInternetInterceptor extends Interceptor {
     );
   }
 
+  /// Makes a request based on stored cURL commands.
   Future<void> _makeRequest() async {
     final curlService = CurlService();
     final dio = Dio();
@@ -202,3 +253,4 @@ class DioInternetInterceptor extends Interceptor {
     }
   }
 }
+
